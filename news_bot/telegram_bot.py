@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import InvalidToken, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -36,10 +37,23 @@ class TelegramController:
         self.state_manager = state_manager
         self.queue_manager = queue_manager
         self.cleaner = cleaner
-        self.app = Application.builder().token(settings.telegram_token).build()
-        self._register_handlers()
+        self.app: Application | None = None
+        self.enabled = False
+        token = (settings.telegram_token or "").strip()
+        if token:
+            try:
+                self.app = Application.builder().token(token).build()
+                self._register_handlers()
+                self.enabled = True
+            except InvalidToken:
+                logger.error("Invalid Telegram bot token provided; Telegram control disabled")
+        else:
+            logger.warning("Telegram bot token is not set; Telegram control disabled")
 
     def _register_handlers(self) -> None:
+        if not self.app:
+            return
+        self.app.add_handler(CommandHandler("start", self.on_start))
         self.app.add_handler(CommandHandler("on", self.on_on))
         self.app.add_handler(CommandHandler("off", self.on_off))
         self.app.add_handler(CommandHandler("reset", self.on_reset))
@@ -53,12 +67,37 @@ class TelegramController:
         self.app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^(publish|delete):"))
 
     async def start(self) -> None:
+        if not self.enabled or not self.app:
+            return
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
+        if self.app.updater:
+            await self.app.updater.start_polling()
+        await self._send_startup_message()
+
+    async def _send_startup_message(self) -> None:
+        if not self.app:
+            return
+        if not self.settings.allowed_chat_id:
+            logger.info("Telegram is running. Set TELEGRAM_ALLOWED_CHAT_ID to receive startup/welcome message.")
+            return
+        try:
+            await self.app.bot.send_message(
+                chat_id=self.settings.allowed_chat_id,
+                text=(
+                    "✅ News automation bot started.\n"
+                    "Use /start for commands.\n"
+                    "Tip: If this is your first run, send /on to enable processing."
+                ),
+            )
+        except TelegramError:
+            logger.exception("Failed to send startup message to allowed chat")
 
     async def stop(self) -> None:
-        await self.app.updater.stop()
+        if not self.enabled or not self.app:
+            return
+        if self.app.updater:
+            await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
 
@@ -67,6 +106,18 @@ class TelegramController:
             return True
         chat = update.effective_chat
         return bool(chat and chat.id == self.settings.allowed_chat_id)
+
+    async def on_start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._authorized(update):
+            return
+        state = await self.state_manager.get_state()
+        text = (
+            "✅ News bot is online.\n"
+            f"Status: {state.get('bot_status')}\n"
+            f"Profile: {state.get('selected_profile')}\n"
+            "Commands: /on /off /reset /status /profile /user /adduser /addurl /blacklist"
+        )
+        await update.effective_message.reply_text(text)
 
     async def on_on(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
@@ -174,7 +225,7 @@ class TelegramController:
             await query.edit_message_text("Deleted")
 
     async def send_uploaded_notification(self, news_id: str, title: str, edit_url: str) -> None:
-        if not self.settings.allowed_chat_id:
+        if not self.enabled or not self.app or not self.settings.allowed_chat_id:
             return
         keyboard = [[
             InlineKeyboardButton("Publish", callback_data=f"publish:{news_id}"),
