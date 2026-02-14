@@ -3,5 +3,4 @@ python-telegram-bot==20.8
 feedparser
 beautifulsoup4
 pytz
-jdatetime
 aiofiles
