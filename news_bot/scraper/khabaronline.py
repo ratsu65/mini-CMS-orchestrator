@@ -6,9 +6,12 @@ from news_bot.scraper.base_scraper import BaseScraper
 
 
 class KhabarOnlineScraper(BaseScraper):
+    def __init__(self, headless: bool = True) -> None:
+        self.headless = headless
+
     async def scrape(self, url: str) -> dict[str, str | None]:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=self.headless)
             page = await browser.new_page()
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(2000)

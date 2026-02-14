@@ -48,7 +48,7 @@ class App:
         self.state_manager = StateManager(self.db)
         self.cleaner = ContentCleaner(self.settings.blacklist_path)
         self.rss_monitor = RSSMonitor(self.settings, self.db)
-        self.scraper = KhabarOnlineScraper()
+        self.scraper = KhabarOnlineScraper(headless=self.settings.headless)
         self.session_manager = CMSSessionManager(self.settings, self.state_manager)
         self.uploader = CMSUploader(self.settings, self.session_manager)
         self.publisher = CMSPublisher(self.session_manager)
@@ -162,7 +162,7 @@ class App:
         await self.initialize()
         await self.telegram.start()
         scheduler_running = False
-        logger.info("system started")
+        logger.info("system started | playwright headless=%s", self.settings.headless)
         try:
             while True:
                 state = await self.state_manager.get_state()

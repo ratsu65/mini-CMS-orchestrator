@@ -19,7 +19,7 @@ class CMSSessionManager:
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
+        self._browser = await self._playwright.chromium.launch(headless=self.settings.headless)
         self._context = await self._browser.new_context()
         if self.settings.cookies_path.exists():
             cookies = json.loads(self.settings.cookies_path.read_text(encoding="utf-8"))

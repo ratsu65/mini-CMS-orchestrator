@@ -22,6 +22,7 @@ class Settings:
     scrape_retry_count: int = 3
     upload_retry_count: int = 3
     publish_retry_count: int = 3
+    headless: bool = field(default_factory=lambda: os.getenv("PLAYWRIGHT_HEADLESS", "true").strip().lower() in {"1", "true", "yes", "on"})
     cms_login_url: str = "https://www.didbaniran.ir/admin-start-GeHid0Greph"
     cms_add_url: str = "https://www.didbaniran.ir/fa/admin/newsstudios/add/"
     tehran_tz: ZoneInfo = field(default_factory=lambda: ZoneInfo("Asia/Tehran"))
