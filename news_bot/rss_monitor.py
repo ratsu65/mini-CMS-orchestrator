@@ -48,18 +48,30 @@ class RSSMonitor:
                 title = entry.get("title", "").strip()
                 if not source_url or not title:
                     continue
+
                 digest = dedupe_hash(source_url, title)
                 exists = await self.db.fetchone("SELECT hash FROM seen_hashes WHERE hash = ?", (digest,))
                 if exists:
                     continue
-                news_id = make_news_id()
+
                 now = datetime.utcnow().isoformat()
+                existing_news = await self.db.fetchone("SELECT id FROM news WHERE source_url = ?", (source_url,))
+                if existing_news:
+                    await self.db.execute(
+                        "INSERT OR IGNORE INTO seen_hashes(hash, created_at) VALUES (?, ?)",
+                        (digest, now),
+                    )
+                    continue
+
+                news_id = make_news_id()
                 await self.db.execute(
                     """
-                    INSERT INTO news(id, source_url, title, lead, content_html, image_path, category, status, cms_edit_url, created_at, updated_at)
+                    INSERT OR IGNORE INTO news(id, source_url, title, lead, content_html, image_path, category, status, cms_edit_url, created_at, updated_at)
                     VALUES (?, ?, ?, '', '', NULL, 'سیاسی', ?, NULL, ?, ?)
                     """,
                     (news_id, source_url, title, NewsStatus.NEW.value, now, now),
                 )
-                await self.db.execute("INSERT INTO seen_hashes(hash, created_at) VALUES (?, ?)", (digest, now))
-                await self.db.add_queue(news_id, QueueType.SCRAPE)
+                created = await self.db.fetchone("SELECT id FROM news WHERE source_url = ?", (source_url,))
+                await self.db.execute("INSERT OR IGNORE INTO seen_hashes(hash, created_at) VALUES (?, ?)", (digest, now))
+                if created and created["id"] == news_id:
+                    await self.db.add_queue(news_id, QueueType.SCRAPE)
