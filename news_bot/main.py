@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+import types
 from datetime import datetime
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ in {None, ""}:
+    package_root = Path(__file__).resolve().parent
+    shim = types.ModuleType("news_bot")
+    shim.__path__ = [str(package_root)]
+    sys.modules.setdefault("news_bot", shim)
 
 from news_bot.cleaner import ContentCleaner
 from news_bot.cms.publisher import CMSPublisher
