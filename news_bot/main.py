@@ -161,17 +161,26 @@ class App:
     async def run(self) -> None:
         await self.initialize()
         await self.telegram.start()
-        self.scheduler.start()
+        scheduler_running = False
         logger.info("system started")
         try:
             while True:
                 state = await self.state_manager.get_state()
-                if state.get("bot_status") == "OFF":
-                    await asyncio.sleep(2)
-                    continue
+                bot_status = state.get("bot_status")
+                if bot_status == "ON" and not scheduler_running:
+                    self.scheduler.start()
+                    scheduler_running = True
+                    logger.info("automation workers started")
+                elif bot_status != "ON" and scheduler_running:
+                    await self.scheduler.stop()
+                    scheduler_running = False
+                    logger.info("automation workers stopped")
                 await asyncio.sleep(1)
         finally:
-            await self.shutdown()
+            if scheduler_running:
+                await self.scheduler.stop()
+            await self.telegram.stop()
+            await self.session_manager.stop()
 
 
 async def main() -> None:

@@ -66,7 +66,7 @@ class TelegramController:
         self.app.add_handler(CommandHandler("addurl", self.on_add_url))
         self.app.add_handler(CommandHandler("blacklist", self.on_blacklist))
         self.app.add_handler(MessageHandler(filters.Regex(r"^\d{6}$"), self.on_otp))
-        self.app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^(publish|delete):"))
+        self.app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^(publish|delete|profile|userselect):"))
 
     async def start(self) -> None:
         if not self.enabled or not self.app:
@@ -112,11 +112,8 @@ class TelegramController:
         try:
             await self.app.bot.send_message(
                 chat_id=self.settings.allowed_chat_id,
-                text=(
-                    "✅ News automation bot started.\n"
-                    "Use /start for commands.\n"
-                    "Tip: If this is your first run, send /on to enable processing."
-                ),
+                text="✅ News automation bot started. Please choose a profile to begin setup:",
+                reply_markup=self._profile_keyboard(),
             )
         except TelegramError:
             logger.exception("Failed to send startup message to allowed chat")
@@ -135,6 +132,17 @@ class TelegramController:
         chat = update.effective_chat
         return bool(chat and chat.id == self.settings.allowed_chat_id)
 
+    def _profile_keyboard(self) -> InlineKeyboardMarkup:
+        keyboard = [[InlineKeyboardButton("didbaniran", callback_data="profile:didbaniran")]]
+        return InlineKeyboardMarkup(keyboard)
+
+    async def _user_keyboard(self) -> InlineKeyboardMarkup | None:
+        users = await self.db.fetchall("SELECT username FROM cms_users ORDER BY created_at DESC")
+        if not users:
+            return None
+        keyboard = [[InlineKeyboardButton(row["username"], callback_data=f"userselect:{row['username']}")] for row in users]
+        return InlineKeyboardMarkup(keyboard)
+
     async def on_start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
             return
@@ -143,9 +151,10 @@ class TelegramController:
             "✅ News bot is online.\n"
             f"Status: {state.get('bot_status')}\n"
             f"Profile: {state.get('selected_profile')}\n"
-            "Commands: /on /off /reset /status /profile /user /adduser /addurl /blacklist"
+            f"User: {state.get('selected_user') or 'not selected'}\n"
+            "Step 1: choose profile."
         )
-        await update.effective_message.reply_text(text)
+        await update.effective_message.reply_text(text, reply_markup=self._profile_keyboard())
 
     async def on_on(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
@@ -184,23 +193,29 @@ class TelegramController:
             "INSERT OR REPLACE INTO cms_users(username, password, created_at) VALUES (?, ?, datetime('now'))",
             (args[0], args[1]),
         )
-        await update.effective_message.reply_text("User added")
+        await update.effective_message.reply_text(f"User added: {args[0]}. Now choose user.")
+        keyboard = await self._user_keyboard()
+        if keyboard:
+            await update.effective_message.reply_text("Step 2: choose CMS user", reply_markup=keyboard)
 
     async def on_select_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
             return
         if not context.args:
-            users = await self.db.fetchall("SELECT username FROM cms_users ORDER BY created_at DESC")
-            await update.effective_message.reply_text("Users: " + ", ".join(row["username"] for row in users))
+            keyboard = await self._user_keyboard()
+            if keyboard:
+                await update.effective_message.reply_text("Choose user", reply_markup=keyboard)
+            else:
+                await update.effective_message.reply_text("No users found. Add one with /adduser <username> <password>")
             return
         await self.state_manager.set_selected_user(context.args[0])
-        await update.effective_message.reply_text(f"Selected user: {context.args[0]}")
+        await self.state_manager.set_bot_status("ON")
+        await update.effective_message.reply_text(f"Selected user: {context.args[0]} | Bot is ON")
 
     async def on_select_profile(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
             return
-        keyboard = [[InlineKeyboardButton("didbaniran", callback_data="profile:didbaniran")]]
-        await update.effective_message.reply_text("Select profile", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.effective_message.reply_text("Step 1: Select profile", reply_markup=self._profile_keyboard())
 
     async def on_add_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._authorized(update):
@@ -242,7 +257,19 @@ class TelegramController:
         if data.startswith("profile:"):
             profile = data.split(":", 1)[1]
             await self.state_manager.set_profile(profile)
-            await query.edit_message_text(f"Profile set: {profile}")
+            keyboard = await self._user_keyboard()
+            if keyboard:
+                await query.edit_message_text(f"Profile set: {profile}. Step 2: choose CMS user")
+                await query.message.reply_text("Choose user", reply_markup=keyboard)
+            else:
+                await query.edit_message_text(
+                    f"Profile set: {profile}. No CMS user found. Add one with /adduser <username> <password>")
+            return
+        if data.startswith("userselect:"):
+            username = data.split(":", 1)[1]
+            await self.state_manager.set_selected_user(username)
+            await self.state_manager.set_bot_status("ON")
+            await query.edit_message_text(f"Selected user: {username}. Bot is ON. RSS monitoring and queues are active.")
             return
         action, news_id = data.split(":", 1)
         if action == "publish":
