@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import InvalidToken, TelegramError
+from telegram.error import Conflict, InvalidToken, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -39,6 +40,7 @@ class TelegramController:
         self.cleaner = cleaner
         self.app: Application | None = None
         self.enabled = False
+        self._polling_stopped_due_conflict = False
         token = (settings.telegram_token or "").strip()
         if token:
             try:
@@ -72,8 +74,34 @@ class TelegramController:
         await self.app.initialize()
         await self.app.start()
         if self.app.updater:
-            await self.app.updater.start_polling()
+            await self.app.updater.start_polling(error_callback=self._polling_error_handler)
         await self._send_startup_message()
+
+    def _polling_error_handler(self, error: TelegramError) -> None:
+        if isinstance(error, Conflict):
+            if self._polling_stopped_due_conflict:
+                return
+            self._polling_stopped_due_conflict = True
+            logger.error(
+                "Telegram polling conflict detected: another process is already using this bot token. "
+                "Stopping polling in this process."
+            )
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.warning("No running event loop available to stop updater immediately")
+                return
+            loop.create_task(self._stop_polling_only())
+            return
+        logger.exception("Telegram polling error: %s", error)
+
+    async def _stop_polling_only(self) -> None:
+        if not self.app or not self.app.updater:
+            return
+        try:
+            await self.app.updater.stop()
+        except Exception:
+            logger.exception("Failed to stop Telegram updater after conflict")
 
     async def _send_startup_message(self) -> None:
         if not self.app:
