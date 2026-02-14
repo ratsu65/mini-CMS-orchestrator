@@ -28,7 +28,7 @@ class Settings:
     telegram_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     allowed_chat_id: int | None = field(default_factory=lambda: int(os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "0")) or None)
     rss_feeds: list[str] = field(default_factory=lambda: [
-        "https://www.khabaronline.ir/rss",
+        "https://www.khabaronline.ir/rss/tp/1",
     ])
 
     def __post_init__(self) -> None:

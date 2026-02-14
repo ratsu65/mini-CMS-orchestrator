@@ -167,11 +167,13 @@ class App:
             while True:
                 state = await self.state_manager.get_state()
                 bot_status = state.get("bot_status")
-                if bot_status == "ON" and not scheduler_running:
+                selected_user = state.get("selected_user")
+                can_run = bot_status == "ON" and bool(selected_user)
+                if can_run and not scheduler_running:
                     self.scheduler.start()
                     scheduler_running = True
                     logger.info("automation workers started")
-                elif bot_status != "ON" and scheduler_running:
+                elif not can_run and scheduler_running:
                     await self.scheduler.stop()
                     scheduler_running = False
                     logger.info("automation workers stopped")
